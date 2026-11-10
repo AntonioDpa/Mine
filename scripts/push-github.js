@@ -70,3 +70,4 @@ if (!token) {
     process.exit(1);
   }
 })();
+

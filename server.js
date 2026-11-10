@@ -154,9 +154,22 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/players') {
     if (req.method === 'GET') {
       const roomId = parsedUrl.searchParams.get('room_id');
-      let list = Object.values(localDb.players);
+      const nowMs = Date.now();
+      // Filtrar únicamente jugadores reales con latido activo en los últimos 15 segundos
+      let list = Object.values(localDb.players).filter((p) => {
+        const t = p.updated_at ? new Date(p.updated_at).getTime() : 0;
+        return (nowMs - t) < 15000;
+      });
       if (roomId) list = list.filter((p) => p.room_id === roomId);
       return sendJson(res, 200, list);
+    }
+    if (req.method === 'DELETE') {
+      const username = parsedUrl.searchParams.get('username');
+      if (username && localDb.players[username]) {
+        delete localDb.players[username];
+        saveLocalDb();
+      }
+      return sendJson(res, 200, { ok: true });
     }
     if (req.method === 'POST') {
       try {
@@ -167,6 +180,10 @@ const server = http.createServer(async (req, res) => {
           display_name: String(body.display_name || username),
           room_id: String(body.room_id || 'SALA-ESMERALDA-1'),
           dimension: String(body.dimension || 'overworld'),
+          x: Number(body.x ?? 0.5),
+          y: Number(body.y ?? 12.0),
+          z: Number(body.z ?? 6.5),
+          yaw: Number(body.yaw ?? 0.0),
           kills: Number(body.kills || 0),
           deaths: Number(body.deaths || 0),
           updated_at: new Date().toISOString()
@@ -248,3 +265,4 @@ server.listen(PORT, () => {
   console.log(`🗄️  Base de Datos Local: ${DB_FILE}`);
   console.log(`===================================================================`);
 });
+

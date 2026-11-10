@@ -168,7 +168,7 @@
           <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
           Sala Online: <span id="room-name-label" class="text-sky-300 font-mono-game">SALA-ESMERALDA-1</span>
         </span>
-        <span id="online-count-badge" class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-emerald-300">4 en línea</span>
+        <span id="online-count-badge" class="px-1.5 py-0.5 rounded bg-slate-800 text-[10px] text-emerald-300">1 en línea</span>
       </div>
       <!-- Active Players & Nearby Villagers summary -->
       <div id="online-roster" class="flex flex-wrap gap-1 mb-2 text-[10px]"></div>
@@ -469,8 +469,8 @@
 
         <!-- Active Entities Summary -->
         <div class="flex items-center justify-between text-xs text-slate-400 px-1">
-          <span>Entidades activas en el mundo: <strong id="spawn-entity-count" class="text-white">6</strong></span>
-          <span class="text-emerald-300">Haz clic derecho o pulsa [F] mirando a un aldeano para abrir sus tradeos</span>
+          <span>Entidades activas en el mundo: <strong id="spawn-entity-count" class="text-white">0</strong></span>
+          <span class="text-emerald-300">Mundo limpio • Los jugadores aparecen automáticamente cuando entran en línea</span>
         </div>
       </div>
     </div>
@@ -2322,40 +2322,90 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
         });
         state.sheepList.forEach((s) => entitiesGroup.remove(s.group));
         state.combatEntities.forEach((ce) => {
-          entitiesGroup.remove(ce.model.group);
-          if (ce.labelEl && ce.labelEl.parentNode) ce.labelEl.parentNode.removeChild(ce.labelEl);
+          if (!ce.isRemotePlayer) {
+            entitiesGroup.remove(ce.model.group);
+            if (ce.labelEl && ce.labelEl.parentNode) ce.labelEl.parentNode.removeChild(ce.labelEl);
+          }
         });
         state.villagers = [];
         state.sheepList = [];
-        state.combatEntities = [];
+        state.combatEntities = state.combatEntities.filter((ce) => ce.isRemotePlayer);
+        state.onlinePeers.forEach((ent) => {
+          const inSameDim = (ent.peerDim === state.dimension) && !ent.dead;
+          ent.model.group.visible = inSameDim;
+          if (!inSameDim) ent.labelEl.style.display = 'none';
+        });
+        updateEntityCountUI();
+        renderOnlineRoster();
+      }
 
-        // Spawn 4 Biome/Dimension Villagers around the Plaza
-        spawnVillager('farmer',     -3.5, -2.5, 'Mateo • Granjero');
-        spawnVillager('blacksmith',  3.5, -2.5, 'Héctor • Herrero');
-        spawnVillager('librarian',  -2.5, -7.5, 'Elena • Bibliotecaria');
-        spawnVillager('cleric',      2.5, -7.5, 'Aurelio • Clérigo');
+      function upsertRemotePlayerEntity(peer) {
+        if (!peer || !peer.username || peer.username === state.username) return;
+        const uname = String(peer.username).trim();
+        const dname = String(peer.name || peer.display_name || uname).trim();
+        const dim = String(peer.dim || peer.dimension || 'overworld');
+        const px = Number.isFinite(Number(peer.x)) ? Number(peer.x) : 0.5;
+        const py = Number.isFinite(Number(peer.y)) ? Number(peer.y) : 12.0;
+        const pz = Number.isFinite(Number(peer.z)) ? Number(peer.z) : 6.5;
+        const pyaw = Number.isFinite(Number(peer.yaw)) ? Number(peer.yaw) : 0;
 
-        // Spawn Online Companions for PvP Kill System
-        spawnCombatEntity('companion_pvp', 'Alex_PvP (Compañero)', -4.5, 4.5, true);
-        spawnCombatEntity('companion_pvp', 'Kael_Sniper (Compañero)', 4.5, 4.5, true);
+        let existing = state.onlinePeers.get(uname);
+        if (!existing) {
+          const ent = spawnCombatEntity('companion_pvp', dname, px, pz, true);
+          ent.isRemotePlayer = true;
+          ent.peerUsername = uname;
+          ent.pos.set(px, py, pz);
+          ent.targetPos = new THREE.Vector3(px, py, pz);
+          ent.targetYaw = pyaw;
+          ent.peerDim = dim;
+          ent.lastSeen = performance.now();
+          ent.cfg = { ...ent.cfg, roleName: 'JUGADOR REAL' };
+          updateCombatEntityLabel(ent);
+          existing = ent;
+          state.onlinePeers.set(uname, ent);
+          addChatLog(`🟢 [${dname}] entró a la sala (${dim})`, 'text-emerald-300');
+          renderOnlineRoster();
+        } else {
+          existing.name = dname;
+          existing.peerDim = dim;
+          existing.targetPos.set(px, py, pz);
+          existing.targetYaw = pyaw;
+          existing.lastSeen = performance.now();
+          updateCombatEntityLabel(existing);
+        }
 
-        // Spawn Dimension-Specific Custom Mobs near the Common Spawners!
-        if (state.dimension === 'overworld') {
-          spawnCombatEntity('creaking_pale', 'El Creaking (1.24)', -6.5, 7.5, false);
-          spawnCombatEntity('breeze_trial', 'Breeze de Cámara (1.24)', 7.5, 7.5, false);
-          spawnCombatEntity('bogged_poison', 'Bogged Pantanoso (1.24)', -8.5, -8.5, false);
-          spawnCombatEntity('stray_ice', 'Espectro Glacial', 8.5, -8.5, false);
-          spawnSheep(-6.5, 2.5);
-        } else if (state.dimension === 'nether') {
-          spawnCombatEntity('piglin_brute', 'Piglin Bruto', -7.5, 7.5, false);
-          spawnCombatEntity('blaze_hover', 'Blaze Piroquinético', 7.5, 6.5, false);
-          spawnCombatEntity('piglin_brute', 'Guardián del Bastión', 8.5, -7.5, false);
-        } else if (state.dimension === 'end') {
-          spawnCombatEntity('enderman_void', 'Enderman del Vacío', -7.5, 7.5, false);
-          spawnCombatEntity('enderman_void', 'Vigilante Chorus', 8.5, 5.5, false);
-        } else if (state.dimension === 'sky') {
-          spawnCombatEntity('valkyrie_sky', 'Valquiria Celeste', -7.5, 7.5, false);
-          spawnCombatEntity('valkyrie_sky', 'Ángel del Aether', 7.5, -6.5, false);
+        const inSameDim = (existing.peerDim === state.dimension) && !existing.dead;
+        existing.model.group.visible = inSameDim;
+        if (!inSameDim) existing.labelEl.style.display = 'none';
+      }
+
+      function removeRemotePlayerEntity(username) {
+        const uname = String(username || '').trim();
+        const ent = state.onlinePeers.get(uname);
+        if (!ent) return;
+        entitiesGroup.remove(ent.model.group);
+        if (ent.labelEl && ent.labelEl.parentNode) ent.labelEl.parentNode.removeChild(ent.labelEl);
+        state.combatEntities = state.combatEntities.filter((ce) => ce !== ent);
+        state.onlinePeers.delete(uname);
+        updateEntityCountUI();
+        renderOnlineRoster();
+      }
+
+      function pruneInactiveRemotePlayers() {
+        const now = performance.now();
+        let changed = false;
+        state.onlinePeers.forEach((ent, uname) => {
+          if (now - (ent.lastSeen || 0) > 14000) {
+            entitiesGroup.remove(ent.model.group);
+            if (ent.labelEl && ent.labelEl.parentNode) ent.labelEl.parentNode.removeChild(ent.labelEl);
+            state.combatEntities = state.combatEntities.filter((ce) => ce !== ent);
+            state.onlinePeers.delete(uname);
+            changed = true;
+          }
+        });
+        if (changed) {
+          updateEntityCountUI();
+          renderOnlineRoster();
         }
       }
 
@@ -2435,11 +2485,39 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
           s.group.rotation.y = s.angle;
         });
 
-        // Update Combat Entities (PvP Companions + Custom Dimension Mobs with Unique Role Behaviors)
+        // Update Combat Entities & Real Remote Players
         const heldItemId = state.hotbar[state.selectedSlot];
         state.combatEntities.forEach((ce, idx) => {
           if (ce.dead) return;
+          if (ce.isRemotePlayer && ce.peerDim !== state.dimension) {
+            ce.model.group.visible = false;
+            ce.labelEl.style.display = 'none';
+            return;
+          }
           const dist = ce.pos.distanceTo(player.pos);
+
+          if (ce.isRemotePlayer && ce.targetPos) {
+            const moveDelta = ce.pos.distanceTo(ce.targetPos);
+            ce.pos.lerp(ce.targetPos, Math.min(1, dt * 12));
+            ce.angle = (ce.targetYaw || 0) + Math.PI;
+            ce.model.group.position.copy(ce.pos);
+            ce.model.group.rotation.y = ce.angle;
+            const swing = moveDelta > 0.03 ? Math.sin(elapsed * 8 + idx) * 0.5 : 0;
+            ce.model.leftLeg.rotation.x = swing;
+            ce.model.rightLeg.rotation.x = -swing;
+
+            const lblPos = new THREE.Vector3(ce.pos.x, ce.pos.y + 2.25 * ce.cfg.scaleY, ce.pos.z);
+            lblPos.project(camera);
+            if (lblPos.z < 1.0 && dist < 36) {
+              ce.labelEl.style.display = 'flex';
+              ce.labelEl.style.left = `${(lblPos.x * halfW) + halfW}px`;
+              ce.labelEl.style.top = `${-(lblPos.y * halfH) + halfH}px`;
+            } else {
+              ce.labelEl.style.display = 'none';
+            }
+            return;
+          }
+
           ce.aiTimer -= dt;
           ce.tpTimer -= dt;
 
@@ -2614,16 +2692,20 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
             broadcastNetworkEvent({ type: 'pvp_kill', killer: state.playerName, victim: ent.name, kills: state.kills });
             syncPlayerProfileToSupabase();
 
-            // Respawn companion/mob from nearby Spawner after 4 seconds
+            // Si es un jugador real remoto, reaparece tras 3s en su posición sincronizada; si era un mob spawneado manualmente, se elimina definitivamente
             setTimeout(() => {
-              ent.hp = ent.maxHp;
-              ent.dead = false;
-              const rx = (Math.random() - 0.5) * 14;
-              const rz = (Math.random() - 0.5) * 14;
-              ent.pos.set(rx, findSurfaceYAt(Math.floor(rx), Math.floor(rz)), rz);
-              ent.model.group.visible = true;
-              updateCombatEntityLabel(ent);
-            }, 4000);
+              if (ent.isRemotePlayer) {
+                ent.hp = ent.maxHp;
+                ent.dead = false;
+                ent.model.group.visible = (ent.peerDim === state.dimension);
+                updateCombatEntityLabel(ent);
+              } else {
+                entitiesGroup.remove(ent.model.group);
+                if (ent.labelEl && ent.labelEl.parentNode) ent.labelEl.parentNode.removeChild(ent.labelEl);
+                state.combatEntities = state.combatEntities.filter((ce) => ce !== ent);
+                updateEntityCountUI();
+              }
+            }, 3000);
           }
           return;
         }
@@ -3334,7 +3416,7 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
         document.getElementById('db-modified-count').textContent = `${state.modifiedBlocks.size} bloques`;
       }
 
-      // Real-time Cross-Tab / Online Room Sync via BroadcastChannel + Active Simulated Builders
+      // Real-time Cross-Tab / Online Room Sync via BroadcastChannel + Supabase Cloud Players
       let netChannel = null;
       try {
         if ('BroadcastChannel' in window) {
@@ -3346,6 +3428,14 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
               setWorldBlock(msg.wx, msg.wy, msg.wz, msg.blockId, false);
             } else if (msg.type === 'chat') {
               addChatLog(`💬 [${msg.sender}]: ${msg.text}`, 'text-sky-300');
+            } else if (msg.type === 'player_tick') {
+              if (!msg.room_id || msg.room_id === state.roomId) {
+                upsertRemotePlayerEntity(msg);
+              }
+            } else if (msg.type === 'player_leave') {
+              removeRemotePlayerEntity(msg.username);
+            } else if (msg.type === 'pvp_kill') {
+              addChatLog(`⚔️ [${msg.killer}] eliminó a [${msg.victim}]`, 'text-rose-400 font-bold');
             }
           };
         }
@@ -3359,12 +3449,19 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
 
       function renderOnlineRoster() {
         const rosterEl = document.getElementById('online-roster');
+        const countEl = document.getElementById('online-count-badge');
         const peers = [
-          { name: `${state.playerName} (Tú)`, role: 'Admin', color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
-          { name: 'Alex_Builder', role: 'Aldea', color: 'bg-sky-500/20 text-sky-300 border-sky-500/40' },
-          { name: 'Steve_Miner', role: 'Chunk 0,-1', color: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
-          { name: '4 Aldeanos IA', role: 'Tradeos Activos', color: 'bg-purple-500/20 text-purple-300 border-purple-500/40' }
+          { name: `${state.playerName} (Tú)`, color: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' }
         ];
+        state.onlinePeers.forEach((ent) => {
+          peers.push({
+            name: `${ent.name} (${ent.peerDim || 'overworld'})`,
+            color: 'bg-sky-500/20 text-sky-300 border-sky-500/40'
+          });
+        });
+        if (countEl) {
+          countEl.textContent = `${peers.length} en línea`;
+        }
         rosterEl.innerHTML = peers.map((p) =>
           `<span class="px-1.5 py-0.5 rounded border ${p.color} font-mono-game">${p.name}</span>`
         ).join('');
@@ -3399,21 +3496,32 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
         if (el) el.textContent = String(total);
       }
 
-      // 20Hz (50ms) Ultra-Low Latency State Sync
+      // 20Hz (50ms) Ultra-Low Latency State Sync (Only when player has entered the world)
       setInterval(() => {
-        if (netChannel && !isAnyModalOpen()) {
+        pruneInactiveRemotePlayers();
+        if (netChannel && state.hasEnteredWorld) {
           broadcastNetworkEvent({
             type: 'player_tick',
+            room_id: state.roomId,
             username: state.username,
             name: state.playerName,
             dim: state.dimension,
-            x: Math.round(player.pos.x * 10) / 10,
-            y: Math.round(player.pos.y * 10) / 10,
-            z: Math.round(player.pos.z * 10) / 10,
+            x: Math.round(player.pos.x * 100) / 100,
+            y: Math.round(player.pos.y * 100) / 100,
+            z: Math.round(player.pos.z * 100) / 100,
+            yaw: Math.round(player.yaw * 100) / 100,
             kills: state.kills
           });
         }
       }, 50);
+
+      // Cloud / Backend Real Player Synchronization every 2s
+      setInterval(() => {
+        if (state.hasEnteredWorld) {
+          syncPlayerProfileToSupabase();
+        }
+        fetchOnlinePlayersFromCloud();
+      }, 2000);
 
       // -------------------------------------------------------------------
       // 12. MODALS & UI EVENT LISTENERS
@@ -3571,11 +3679,16 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
       }
 
       async function syncPlayerProfileToSupabase() {
+        if (!state.hasEnteredWorld) return;
         const playerPayload = {
           username: state.username,
           display_name: state.playerName,
           room_id: state.roomId,
           dimension: state.dimension,
+          x: Math.round(player.pos.x * 100) / 100,
+          y: Math.round(player.pos.y * 100) / 100,
+          z: Math.round(player.pos.z * 100) / 100,
+          yaw: Math.round(player.yaw * 100) / 100,
           kills: state.kills,
           deaths: state.deaths,
           updated_at: new Date().toISOString()
@@ -3612,6 +3725,60 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
         } catch (err) {}
       }
 
+      async function fetchOnlinePlayersFromCloud() {
+        const nowMs = Date.now();
+        // 1. Check local Node.js backend service if available
+        if (window.location.protocol.startsWith('http')) {
+          try {
+            const lRes = await fetch('/api/players?room_id=' + encodeURIComponent(state.roomId));
+            if (lRes.ok) {
+              const lRows = await lRes.json();
+              if (Array.isArray(lRows)) {
+                lRows.forEach((r) => {
+                  const updatedMs = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+                  if (r.username && r.username !== state.username && (nowMs - updatedMs) < 14000) {
+                    upsertRemotePlayerEntity(r);
+                  }
+                });
+              }
+            }
+          } catch (e) {}
+        }
+
+        // 2. Check Supabase Cloud DB for active real players in the room
+        if (!supabaseConfig.enabled || !supabaseConfig.url || !supabaseConfig.publishableKey) return;
+        try {
+          const getUrl = supabaseConfig.url + '/rest/v1/voxel_players?room_id=eq.' + encodeURIComponent(state.roomId) + '&select=username,display_name,dimension,x,y,z,yaw,kills,updated_at';
+          const res = await fetch(getUrl, { headers: buildSupabaseHeaders() });
+          if (!res.ok) return;
+          const rows = await res.json();
+          if (Array.isArray(rows)) {
+            const activeCloudUsernames = new Set();
+            rows.forEach((r) => {
+              const updatedMs = r.updated_at ? new Date(r.updated_at).getTime() : 0;
+              if (r.username && r.username !== state.username && (nowMs - updatedMs) < 14000) {
+                activeCloudUsernames.add(r.username);
+                upsertRemotePlayerEntity(r);
+              }
+            });
+          }
+        } catch (err) {}
+      }
+
+      window.addEventListener('beforeunload', () => {
+        broadcastNetworkEvent({ type: 'player_leave', username: state.username });
+        if (window.location.protocol.startsWith('http')) {
+          fetch('/api/players?username=' + encodeURIComponent(state.username), { method: 'DELETE', keepalive: true }).catch(() => {});
+        }
+        if (supabaseConfig.enabled && supabaseConfig.url && supabaseConfig.publishableKey) {
+          fetch(supabaseConfig.url + '/rest/v1/voxel_players?username=eq.' + encodeURIComponent(state.username), {
+            method: 'DELETE',
+            headers: buildSupabaseHeaders(),
+            keepalive: true
+          }).catch(() => {});
+        }
+      });
+
       function toggleCameraPerspective() {
         player.thirdPerson = !player.thirdPerson;
         player3DGroup.visible = player.thirdPerson;
@@ -3634,27 +3801,36 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
       });
 
       document.getElementById('btn-close-lobby').addEventListener('click', () => {
+        state.hasEnteredWorld = true;
         closeAllModals();
+        syncPlayerProfileToSupabase();
+        fetchOnlinePlayersFromCloud();
         activateMouseCapture();
       });
 
       document.getElementById('lobby-register-form').addEventListener('submit', (e) => {
         e.preventDefault();
-        const uname = document.getElementById('lobby-username').value.trim() || 'jugador_01';
+        const uname = document.getElementById('lobby-username').value.trim() || state.username;
         const dname = document.getElementById('lobby-displayname').value.trim() || uname;
         const dimRadio = document.querySelector('input[name="lobby_dim"]:checked');
         const chosenDim = dimRadio ? dimRadio.value : 'overworld';
 
         state.username = uname;
         state.playerName = dname;
+        state.hasEnteredWorld = true;
+        try {
+          sessionStorage.setItem('voxel_tab_username', uname);
+          sessionStorage.setItem('voxel_tab_displayname', dname);
+        } catch (err) {}
         document.getElementById('hud-user-chip').textContent = dname.slice(0, 12);
         renderOnlineRoster();
         savePlayerStateToLocal();
-        syncPlayerProfileToSupabase();
         closeAllModals();
         switchDimension(chosenDim);
+        syncPlayerProfileToSupabase();
+        fetchOnlinePlayersFromCloud();
         activateMouseCapture();
-        showToast(`✅ Registrado en BD como ${dname} (@${uname})`);
+        showToast(`✅ Conectado al mundo como ${dname} (@${uname})`);
       });
 
       // Top Toolbar Buttons
@@ -4340,11 +4516,30 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
       let animFrameId = null;
 
       function startApp() {
+        // Asignar identidad única por sesión para que cada jugador real que abra el juego tenga su propio avatar
+        try {
+          let tabUser = sessionStorage.getItem('voxel_tab_username');
+          let tabName = sessionStorage.getItem('voxel_tab_displayname');
+          if (!tabUser) {
+            const randId = Math.floor(100 + Math.random() * 900);
+            tabUser = `jugador_${randId}`;
+            tabName = `Jugador ${randId}`;
+            sessionStorage.setItem('voxel_tab_username', tabUser);
+            sessionStorage.setItem('voxel_tab_displayname', tabName);
+          }
+          state.username = tabUser;
+          state.playerName = tabName;
+          const uInput = document.getElementById('lobby-username');
+          const dInput = document.getElementById('lobby-displayname');
+          if (uInput) uInput.value = tabUser;
+          if (dInput) dInput.value = tabName;
+          document.getElementById('hud-user-chip').textContent = tabName.slice(0, 12);
+        } catch (e) {}
+
         loadPlayerStateFromLocal();
         initIndexedDB();
         fetchBlocksFromSupabase();
         renderHotbarUI();
-        renderOnlineRoster();
 
         // Spawn player safely on top of terrain near the Village
         const startY = getTerrainHeight(0, 6) + 1;
@@ -4356,8 +4551,8 @@ CREATE POLICY "Acceso publico bloques" ON public.voxel_world_blocks
         updateSkyAndLighting();
 
         addChatLog('🌍 Mundo Voxel por Chunks generado (Semilla: ' + state.seedString + ')', 'text-emerald-300');
-        addChatLog('🧑‍🌾 4 Aldeanos con tradeos activos en la Aldea Esmeralda.', 'text-amber-300');
-        addChatLog('🗄️ Base de Datos IndexedDB y Sala Online conectadas.', 'text-sky-300');
+        addChatLog('👥 Sin entidades fantasma: solo verás jugadores reales cuando entren a la sala.', 'text-amber-300');
+        addChatLog('🗄️ Base de Datos Supabase + IndexedDB conectadas.', 'text-sky-300');
 
         if (animFrameId) cancelAnimationFrame(animFrameId);
 

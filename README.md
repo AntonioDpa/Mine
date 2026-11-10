@@ -26,3 +26,4 @@ El proyecto está preconfigurado con las credenciales de Supabase:
 Para crear las tablas (`public.voxel_players` y `public.voxel_world_blocks`) y políticas RLS en Supabase:
 1. Abre el [SQL Editor de tu proyecto en Supabase](https://supabase.com/dashboard/project/diibkzipwilsboapvhud/sql/new).
 2. Pega y ejecuta el contenido de [`supabase/schema.sql`](./supabase/schema.sql).
+
