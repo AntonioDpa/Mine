@@ -16,12 +16,35 @@ const SUPABASE_URL = 'https://diibkzipwilsboapvhud.supabase.co';
 const PUBLISHABLE_KEY = 'sb_publishable_DM67zoUwTg8KoW4RWf9JVA_CE6FmV_H';
 
 async function verifyTables() {
-  console.log('🔍 Verificando conexión con Supabase REST API...');
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/voxel_players?select=username&limit=1`, {
+  console.log('🔍 Verificando conexión y permisos RLS con Supabase REST API...');
+  const pRes = await fetch(`${SUPABASE_URL}/rest/v1/voxel_players?on_conflict=username`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: PUBLISHABLE_KEY,
+      Prefer: 'resolution=merge-duplicates,return=representation'
+    },
+    body: JSON.stringify({
+      username: 'cris_miner01',
+      display_name: 'Cris El Conquistador',
+      room_id: 'SALA-ESMERALDA-1',
+      dimension: 'overworld',
+      kills: 0,
+      deaths: 0
+    })
+  });
+  if (!pRes.ok) {
+    console.log(`⚠️ Error insertando en voxel_players (${pRes.status}):`, await pRes.text());
+    return false;
+  }
+
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/voxel_players?select=username,display_name,room_id,dimension&limit=5`, {
     headers: { apikey: PUBLISHABLE_KEY }
   });
   if (res.ok) {
+    const rows = await res.json();
     console.log('✅ ¡Las tablas public.voxel_players y public.voxel_world_blocks YA existen y están activas!');
+    console.log('📊 Jugadores registrados en Supabase:', JSON.stringify(rows));
     return true;
   }
   const text = await res.text();
@@ -71,3 +94,4 @@ async function createTablesWithToken(accessToken) {
     process.exit(1);
   }
 })();
+
